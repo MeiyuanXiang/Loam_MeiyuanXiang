@@ -30,6 +30,10 @@
 //   J. Zhang and S. Singh. LOAM: Lidar Odometry and Mapping in Real-time.
 //     Robotics: Science and Systems Conference (RSS). Berkeley, CA, July 2014.
 
+/*
+  laserMapping主要用于优化雷达里程计的位姿估计结果。
+*/
+
 #include <math.h>
 
 #include <loam_velodyne/common.h>
@@ -63,14 +67,14 @@ bool newLaserCloudSurfLast = false;
 bool newLaserCloudFullRes = false;
 bool newLaserOdometry = false;
 
-int laserCloudCenWidth = 10; // 中心cube索引
-int laserCloudCenHeight = 5; // 中心cube索引
-int laserCloudCenDepth = 10; // 中心cube索引
-const int laserCloudWidth = 21;
-const int laserCloudHeight = 11;
-const int laserCloudDepth = 21;
+int laserCloudCenWidth = 10; // 邻域宽度, cm为单位
+int laserCloudCenHeight = 5; // 邻域高度
+int laserCloudCenDepth = 10; // 邻域深度
+const int laserCloudWidth = 21; // 子cube沿宽方向的分割个数
+const int laserCloudHeight = 11; // 高方向个数
+const int laserCloudDepth = 21; // 深度方向个数
 
-const int laserCloudNum = laserCloudWidth * laserCloudHeight * laserCloudDepth; // 点云方块集合最大数量，4851个长宽高为 cm × cm × cm 的立方体
+const int laserCloudNum = laserCloudWidth * laserCloudHeight * laserCloudDepth; // 子cube总数，4851个长宽高为 cm × cm × cm 的立方体
 
 int laserCloudValidInd[125]; // lidar视域范围内(FOV)的点云集索引
 int laserCloudSurroundInd[125]; // lidar周围的点云集索引
@@ -369,9 +373,10 @@ void imuHandler(const sensor_msgs::Imu::ConstPtr& imuIn)
 
 int main(int argc, char** argv)
 {
-  ros::init(argc, argv, "laserMapping");
-  ros::NodeHandle nh;
+  ros::init(argc, argv, "laserMapping"); // 注册laserMapping节点
+  ros::NodeHandle nh; // 创建管理节点的句柄
 
+  /* 订阅并处理消息 */
   ros::Subscriber subLaserCloudCornerLast = nh.subscribe<sensor_msgs::PointCloud2>("/laser_cloud_corner_last", 2, laserCloudCornerLastHandler);
   ros::Subscriber subLaserCloudSurfLast = nh.subscribe<sensor_msgs::PointCloud2>("/laser_cloud_surf_last", 2, laserCloudSurfLastHandler);
   ros::Subscriber subLaserOdometry = nh.subscribe<nav_msgs::Odometry>("/laser_odom_to_init", 5, laserOdometryHandler);
@@ -379,9 +384,11 @@ int main(int argc, char** argv)
   ros::Subscriber subLaserCloudFullRes = nh.subscribe<sensor_msgs::PointCloud2>("/velodyne_cloud_3", 2, laserCloudFullResHandler);
   ros::Subscriber subImu = nh.subscribe<sensor_msgs::Imu> ("/imu/data", 50, imuHandler);
   
+  /* 发布消息 */
   ros::Publisher pubLaserCloudSurround = nh.advertise<sensor_msgs::PointCloud2>("/laser_cloud_surround", 1);
   ros::Publisher pubLaserCloudFullRes = nh.advertise<sensor_msgs::PointCloud2>("/velodyne_cloud_registered", 2);
   ros::Publisher pubOdomAftMapped = nh.advertise<nav_msgs::Odometry> ("/aft_mapped_to_init", 5);
+
   nav_msgs::Odometry odomAftMapped;
   odomAftMapped.header.frame_id = "/camera_init";
   odomAftMapped.child_frame_id = "/aft_mapped";
@@ -426,8 +433,8 @@ int main(int argc, char** argv)
     laserCloudSurfArray2[i].reset(new pcl::PointCloud<PointType>());
   }
 
-  int frameCount = stackFrameNum - 1; //0
-  int mapFrameCount = mapFrameNum - 1; //4
+  int frameCount = stackFrameNum - 1; // 0
+  int mapFrameCount = mapFrameNum - 1; // 4
   ros::Rate rate(100); // 运行频率100Hz
   bool status = ros::ok();
   while (status) { // while循环首先进行一次回调，并确保时间一致性，然后重置标志位，帧数量+1
@@ -443,23 +450,32 @@ int main(int argc, char** argv)
       newLaserOdometry = false;
 
       frameCount++;
-      /*坐标变换*/
-      if (frameCount >= stackFrameNum) {
-        transformAssociateToMap(); // 地图匹配坐标转换
 
-        // 将最新接收到的平面点和边沿点进行旋转平移转换到世界坐标系下(这里和后面的逆转换应无必要)
+      /***********************************
+       ************* 坐标变换 *************
+       ***********************************/
+
+      if (frameCount >= stackFrameNum) {
+        transformAssociateToMap(); // 将相关坐标转移到世界坐标系下->得到可用于建图的Lidar坐标
+
+        // 将上一时刻所有边特征转到世界坐标系下
         int laserCloudCornerLastNum = laserCloudCornerLast->points.size();
         for (int i = 0; i < laserCloudCornerLastNum; i++) {
           pointAssociateToMap(&laserCloudCornerLast->points[i], &pointSel);
           laserCloudCornerStack2->push_back(pointSel);
         }
 
-        int laserCloudSurfLastNum = laserCloudSurfLast->points.size(); // 面特征点
+        // 将上一时刻所有面特征转到世界坐标系下
+        int laserCloudSurfLastNum = laserCloudSurfLast->points.size();
         for (int i = 0; i < laserCloudSurfLastNum; i++) {
           pointAssociateToMap(&laserCloudSurfLast->points[i], &pointSel);
           laserCloudSurfStack2->push_back(pointSel);
         }
       }
+
+      /***********************************
+       ************* 优化处理 *************
+       ***********************************/
 
 	    /* 优化处理,找当前估计的lidar位姿属于哪个cube，I/J/K对应cube的索引 */
       if (frameCount >= stackFrameNum) {
@@ -484,7 +500,7 @@ int main(int argc, char** argv)
         if (transformTobeMapped[5] + 25.0 < 0) centerCubeK--;
 
         // 调整之后取值范围:3 < centerCubeI < 18， 3 < centerCubeJ < 8, 3 < centerCubeK < 18
-        // 如果当前帧lidar位姿对应的cube在整个大cube边缘则将索引向中心方向挪动一个单位
+        // 如果当前帧lidar位姿对应的cube在整个大cube边缘则将索引向中心方向挪动一个单位，为了截取边沿cube
         while (centerCubeI < 3) { // width方向的小端，将帧cube指针向中心方向平移
           for (int j = 0; j < laserCloudHeight; j++) {
             for (int k = 0; k < laserCloudDepth; k++) { // 实现一次循环移位效果
@@ -515,7 +531,7 @@ int main(int argc, char** argv)
         }
 
         // 如果处于上边界，表明地图向正方向延伸的可能性比较大，则循环移位，将数组中心点向下边界调整一个单位
-        while (centerCubeI >= laserCloudWidth - 3) {//18
+        while (centerCubeI >= laserCloudWidth - 3) { // 18
           for (int j = 0; j < laserCloudHeight; j++) {
             for (int k = 0; k < laserCloudDepth; k++) {
               int i = 0;
@@ -655,7 +671,9 @@ int main(int argc, char** argv)
           laserCloudCenDepth--;
         }
 
-        // 在当前帧lidar位姿所在cube附近5×5×5的邻域cube内找有效的cube
+        // 处理完毕边沿点
+
+        // 在当前帧lidar位姿所在cube附近5×5×5的邻域cube内找对应的匹配点
         int laserCloudValidNum = 0; // 125个领域cube中有效领域的num
         int laserCloudSurroundNum = 0; // RS最远距离确认
         // 在每一维附近5个cube(前2个，后2个，中间1个)里进行查找（前后250米范围内，总共500米范围），三个维度总共125个cube
@@ -672,7 +690,7 @@ int main(int argc, char** argv)
                 float centerY = 50.0 * (j - laserCloudCenHeight);
                 float centerZ = 50.0 * (k - laserCloudCenDepth);
 
-                // 取cube的8个顶点
+                // 取邻近的8个点坐标
                 bool isInLaserFOV = false; // 判断是否在lidar视线范围内的标志（is in Laser's Field of View）
                 for (int ii = -1; ii <= 1; ii += 2) {
                   for (int jj = -1; jj <= 1; jj += 2) {
@@ -722,6 +740,11 @@ int main(int argc, char** argv)
           }
         }
 
+        /*
+          还需要判断该点是否属于当前lidar的可视范围内，可以根据余弦公式对距离范围进行推导。根据代码中的式子，只要点在x轴±60°的范围内都认为时FOV中的点，
+          作者这么做是因为lidar里程计的估计结果抬不准确了，只能概略的取一个较大的范围。于是我们就得到了在当前lidar位置的邻域内有效的地图特征点。
+        */
+
         // 拼接有效领域cube内的特征点云作为map点云用来匹配
         laserCloudCornerFromMap->clear();
         laserCloudSurfFromMap->clear();
@@ -730,21 +753,24 @@ int main(int argc, char** argv)
           *laserCloudCornerFromMap += *laserCloudCornerArray[laserCloudValidInd[i]]; // 有效cube构成匹配地图
           *laserCloudSurfFromMap += *laserCloudSurfArray[laserCloudValidInd[i]];
         }
-        int laserCloudCornerFromMapNum = laserCloudCornerFromMap->points.size(); // corner点云中特征点数量
-        int laserCloudSurfFromMapNum = laserCloudSurfFromMap->points.size(); // surf点云特征点数量
+        int laserCloudCornerFromMapNum = laserCloudCornerFromMap->points.size(); // 有效的特征边上的点的个数
+        int laserCloudSurfFromMapNum = laserCloudSurfFromMap->points.size(); // 有效的特征面上的点的个数
 
         /***********************************************************************
-		      将世界坐标系下的当前帧特征点转到当前Lidar坐标系下
-          此处将特征点转移回local坐标系，是为了voxel grid filter的下采样操作不越
-          界？好像不是！后面还会转移回世界坐标系，这里是前面的逆转换，和前面一样
-          应无必要，可直接对laserCloudCornerLast和laserCloudSurfLast进行下采样
+		      将世界坐标系下的当前帧特征点转到当前lidar坐标系下
+          为了保证当前帧的点云足够平滑，还对点云进行滤波处理。
+          使用KD树，来寻找最邻近的5个点。
+          对点云协方差矩阵进行主成分分析：若这五个点分布在直线上，协方差矩阵的特征值包含一个元素显著大于其余两个，与该特征值相关的特征向量表示所处直线的方向；
+          若这五个点分布在平面上，协方差矩阵的特征值存在一个显著小的元素，与该特征值相关的特征向量表示所处平面的法线方向。
+          因此我们可以很轻易的根据特征向量找到直线上两点从而利用论文中点到直线的距离公式构建优化问题。
+          平面特征也是相同的思路。完成了优化问题的构建之后就可以对它进行求解了，求解方法还是L-M迭代。
         ***********************************************************************/
-        int laserCloudCornerStackNum2 = laserCloudCornerStack2->points.size(); // 当前帧边特征点点数
+        int laserCloudCornerStackNum2 = laserCloudCornerStack2->points.size(); // 所有特征边上的点的个数
         for (int i = 0; i < laserCloudCornerStackNum2; i++) {
           pointAssociateTobeMapped(&laserCloudCornerStack2->points[i], &laserCloudCornerStack2->points[i]);
         }
 
-        int laserCloudSurfStackNum2 = laserCloudSurfStack2->points.size(); // 当前帧平面特征点点数
+        int laserCloudSurfStackNum2 = laserCloudSurfStack2->points.size(); // 所有特征面上的点的个数
         for (int i = 0; i < laserCloudSurfStackNum2; i++) {
           pointAssociateTobeMapped(&laserCloudSurfStack2->points[i], &laserCloudSurfStack2->points[i]);
         }
@@ -1138,7 +1164,7 @@ int main(int argc, char** argv)
         }
 
         mapFrameCount++;
-        if (mapFrameCount >= mapFrameNum) { // 每隔五帧，特征点汇总后进行下采样并publish一次，从第一次开始
+        if (mapFrameCount >= mapFrameNum) { // 为了保证运行效率，每隔五帧，特征点汇总后进行下采样并publish一次，从第一次开始
           mapFrameCount = 0;
 
           laserCloudSurround2->clear();

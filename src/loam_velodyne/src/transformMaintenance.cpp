@@ -30,6 +30,10 @@
 //   J. Zhang and S. Singh. LOAM: Lidar Odometry and Mapping in Real-time.
 //     Robotics: Science and Systems Conference (RSS). Berkeley, CA, July 2014.
 
+/*
+  transformMaintenance主要是处理轨迹发布，如果有优化结果，则使用这一时刻的优化结果作为轨迹，如果没有优化结果只有里程计结果，则使用里程计结果作为这一时刻的轨迹。
+*/
+
 #include <cmath>
 
 #include <loam_velodyne/common.h>
@@ -164,7 +168,7 @@ void laserOdometryHandler(const nav_msgs::Odometry::ConstPtr& laserOdometry)
   transformSum[4] = laserOdometry->pose.pose.position.y;
   transformSum[5] = laserOdometry->pose.pose.position.z;
 
-  transformAssociateToMap();  // 位姿转换
+  transformAssociateToMap();  // lidar里程计估计位姿转到世界坐标系下
 
   geoQuat = tf::createQuaternionMsgFromRollPitchYaw(transformMapped[2], -transformMapped[0], -transformMapped[1]); // lidar在世界坐标系下的姿态
 
@@ -213,8 +217,8 @@ void odomAftMappedHandler(const nav_msgs::Odometry::ConstPtr& odomAftMapped)
 
 int main(int argc, char** argv)
 {
-  ros::init(argc, argv, "transformMaintenance");
-  ros::NodeHandle nh;
+  ros::init(argc, argv, "transformMaintenance"); // 注册transformMaintenance节点
+  ros::NodeHandle nh; // 创建管理节点的句柄
 
   ros::Subscriber subLaserOdometry = nh.subscribe<nav_msgs::Odometry>("/laser_odom_to_init", 5, laserOdometryHandler); // 帧间匹配得到的laser位姿
   ros::Subscriber subOdomAftMapped = nh.subscribe<nav_msgs::Odometry>("/aft_mapped_to_init", 5, odomAftMappedHandler); // 地图匹配得到的更高精度laser位姿

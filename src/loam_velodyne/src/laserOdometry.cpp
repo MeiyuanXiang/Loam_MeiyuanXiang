@@ -30,6 +30,10 @@
 //   J. Zhang and S. Singh. LOAM: Lidar Odometry and Mapping in Real-time.
 //     Robotics: Science and Systems Conference (RSS). Berkeley, CA, July 2014.
 
+/*
+  laserOdometry主要利用相邻两帧的点云数据进行配准，即完成t时刻和t+1时刻点云数据的光联，并估计雷达的相对运动关系。
+*/
+
 #include <cmath>
 
 #include <loam_velodyne/common.h>
@@ -94,14 +98,12 @@ pcl::KdTreeFLANN<PointType>::Ptr kdtreeSurfLast(new pcl::KdTreeFLANN<PointType>(
 int laserCloudCornerLastNum;
 int laserCloudSurfLastNum;
 
-// 没有用到
-int pointSelCornerInd[40000];
+int pointSelCornerInd[40000]; // 没有用到
 // 存储两个搜索到的边缘点的索引
 float pointSearchCornerInd1[40000];
 float pointSearchCornerInd2[40000];
 
-// 没有用到
-int pointSelSurfInd[40000];
+int pointSelSurfInd[40000]; // 没有用到
 // 存储三个搜索到的平面点的索引
 float pointSearchSurfInd1[40000];
 float pointSearchSurfInd2[40000];
@@ -410,13 +412,12 @@ void imuTransHandler(const sensor_msgs::PointCloud2ConstPtr& imuTrans2)
   newImuTrans = true;
 }
 
-// 订阅话题/初始化
 int main(int argc, char** argv)
 {
   ros::init(argc, argv, "laserOdometry"); // 注册laserOdometry节点
   ros::NodeHandle nh; // 创建管理节点的句柄
 
-  // 订阅scanRegistration发布的五种信息
+  /* 订阅并处理消息 */
   ros::Subscriber subCornerPointsSharp = nh.subscribe<sensor_msgs::PointCloud2>("/laser_cloud_sharp", 2, laserCloudSharpHandler);
   ros::Subscriber subCornerPointsLessSharp = nh.subscribe<sensor_msgs::PointCloud2>("/laser_cloud_less_sharp", 2, laserCloudLessSharpHandler);
   ros::Subscriber subSurfPointsFlat = nh.subscribe<sensor_msgs::PointCloud2>("/laser_cloud_flat", 2, laserCloudFlatHandler);
@@ -424,6 +425,7 @@ int main(int argc, char** argv)
   ros::Subscriber subLaserCloudFullRes = nh.subscribe<sensor_msgs::PointCloud2>("/velodyne_cloud_2", 2, laserCloudFullResHandler); // 上一节点里的所有点
   ros::Subscriber subImuTrans = nh.subscribe<sensor_msgs::PointCloud2>("/imu_trans", 5, imuTransHandler);
 
+  /* 发布消息 */
   ros::Publisher pubLaserCloudCornerLast = nh.advertise<sensor_msgs::PointCloud2>("/laser_cloud_corner_last", 2);
   ros::Publisher pubLaserCloudSurfLast = nh.advertise<sensor_msgs::PointCloud2>("/laser_cloud_surf_last", 2);
   ros::Publisher pubLaserCloudFullRes = nh.advertise<sensor_msgs::PointCloud2>("/velodyne_cloud_3", 2); // 本次节点里的变换到扫描结束时刻的所有点
@@ -443,7 +445,6 @@ int main(int argc, char** argv)
 
   PointType pointOri, pointSel/*选中的特征点*/, tripod1, tripod2, tripod3/*特征点的对应点*/, pointProj/*没用到*/, coeff;
 
-  
   bool isDegenerate = false; // 退化标志
   cv::Mat matP(6, 6, CV_32F, cv::Scalar::all(0)); // P矩阵，预测矩阵
 
@@ -467,30 +468,31 @@ int main(int argc, char** argv)
       newLaserCloudFullRes = false;
       newImuTrans = false;
 
-      // 初始化LaserCloudCornerLast和LaserCloudSurfLast作为前一时刻数据，并转换为ros格式发布
+      /***********************************
+       ************** 初始化 *************
+       ***********************************/
+
       if (!systemInited) {
-        // 将订阅的cornerPointsLessSharp点云作为laserCloudCornerLast
+        // 将订阅的数据保存为上一时刻的数据
         pcl::PointCloud<PointType>::Ptr laserCloudTemp = cornerPointsLessSharp;
         cornerPointsLessSharp = laserCloudCornerLast;
         laserCloudCornerLast = laserCloudTemp;
 
-        // 将订阅的surfPointsLessFlat点云作为laserCloudSurfLast
         laserCloudTemp = surfPointsLessFlat;
         surfPointsLessFlat = laserCloudSurfLast;
         laserCloudSurfLast = laserCloudTemp;
 
-        // 将以上两个点云构建kd-tree
+        // 构建kd-tree
         kdtreeCornerLast->setInputCloud(laserCloudCornerLast); // 所有的边缘点集合
         kdtreeSurfLast->setInputCloud(laserCloudSurfLast); // 所有的平面点集合
 
-        // 发布laserCloudCornerLast
+        // 将上一时刻的数据直接发布出去
         sensor_msgs::PointCloud2 laserCloudCornerLast2;
         pcl::toROSMsg(*laserCloudCornerLast, laserCloudCornerLast2);
         laserCloudCornerLast2.header.stamp = ros::Time().fromSec(timeSurfPointsLessFlat);
         laserCloudCornerLast2.header.frame_id = "/camera";
         pubLaserCloudCornerLast.publish(laserCloudCornerLast2);
 
-        // 发布laserCloudSurfLast
         sensor_msgs::PointCloud2 laserCloudSurfLast2;
         pcl::toROSMsg(*laserCloudSurfLast, laserCloudSurfLast2);
         laserCloudSurfLast2.header.stamp = ros::Time().fromSec(timeSurfPointsLessFlat);
@@ -510,17 +512,26 @@ int main(int argc, char** argv)
       transform[4] -= imuVeloFromStartY * scanPeriod;
       transform[5] -= imuVeloFromStartZ * scanPeriod;
 
-      if (laserCloudCornerLastNum > 10 && laserCloudSurfLastNum > 100) { // 上一时刻边缘特征点大于10，平面特征点大于100，保证足够多的特征点可用于t+1时刻的匹配
+      /***********************************
+       ******** 点云配准与运动估计 *********
+       ***********************************/
+
+      if (laserCloudCornerLastNum > 10 && laserCloudSurfLastNum > 100) { // 上一时刻特征边(曲率大)上的点云个数大于10， 特征面内的点云大于100，保证足够多的特征点可用于t+1时刻的匹配
         std::vector<int> indices;
-        pcl::removeNaNFromPointCloud(*cornerPointsSharp,*cornerPointsSharp, indices); // 去除坐标包含NaN的无效点，三个参数分别为输入点云，输出点云及对应保留的索引
-        int cornerPointsSharpNum = cornerPointsSharp->points.size(); // 当前时刻边缘特征点的个数
-        int surfPointsFlatNum = surfPointsFlat->points.size(); // 当前时刻平面特征点的个数
+        pcl::removeNaNFromPointCloud(*cornerPointsSharp, *cornerPointsSharp, indices); // 去除坐标包含NaN的无效点
+        int cornerPointsSharpNum = cornerPointsSharp->points.size(); // 当前时刻特征边上的点云个数
+        int surfPointsFlatNum = surfPointsFlat->points.size(); // 前时刻特征面上的点云个数
         
         // Levenberg-Marquardt算法(L-M method)，非线性最小二乘算法，最优化算法的一种
         // 最多迭代25次
         for (int iterCount = 0; iterCount < 25; iterCount++) {
           laserCloudOri->clear();
           coeffSel->clear();
+
+          /*
+           1. 特征边上的点配准并构建Jaccobian
+           利用KD树找点i在t时刻点云中最近的一点j，并在j周围(上下几条线的范围内)找次近点I，于是我们把(j, I)称为点i在t时刻点云中的对应。
+          */
 
           /*
             对于每一个线特征点调用TransformToStart()函数，将其转换至初始点位姿坐标系。
@@ -535,10 +546,10 @@ int main(int argc, char** argv)
 
           // 特征线上的点配准
           for (int i = 0; i < cornerPointsSharpNum; i++) {
-		  	// 遍历边缘特征点寻找最近点和次近点
+		  	    // 遍历边缘特征点寻找最近点和次近点
             TransformToStart(&cornerPointsSharp->points[i], &pointSel); // 对于每一个线特征点，将其转换至初始点位姿坐标系。
 
-            if (iterCount % 5 == 0) { // 每迭代五次，搜索一次最近点和次近点
+            if (iterCount % 5 == 0) { // 每迭代五次，搜索一次最近点和次近点(降采样)
               std::vector<int> indices;
               pcl::removeNaNFromPointCloud(*laserCloudCornerLast,*laserCloudCornerLast, indices);
               // kd-tree查找一个最近距离点，边沿点未经过体素栅格滤波，一般边沿点本来就比较少，不做滤波
@@ -552,13 +563,13 @@ int main(int argc, char** argv)
                 closestPointInd = pointSearchInd[0]; // 最邻近点
                 int closestPointScan = int(laserCloudCornerLast->points[closestPointInd].intensity);  // 最近点所在的scan_ID
                 float pointSqDis, minPointSqDis2 = 25;
-                // 从找到的最近点开始，向上搜索，遍历所有边特征点
+                // 从找得到的最邻近点开始，向上搜索，遍历所有边特征点
                 for (int j = closestPointInd + 1; j < laserCloudCornerLastNum/*源程序为cornerPointsSharpNum*/; j++) { // 向scanID增大的方向查找
-                  if (int(laserCloudCornerLast->points[j].intensity) > closestPointScan + 2.5) { // 当检索到与最临近点相距3条线的特征点时跳出
+                  if (int(laserCloudCornerLast->points[j].intensity) > closestPointScan + 2.5) { // 找到与最邻近点相距3条线的特征点时跳出
                     break;
                   }
 
-                  // 计算遍历点与当前帧特征点的距离方
+                  // 计算遍历点与最邻近点的距离(平方)
                   pointSqDis = (laserCloudCornerLast->points[j].x - pointSel.x) * 
                                (laserCloudCornerLast->points[j].x - pointSel.x) + 
                                (laserCloudCornerLast->points[j].y - pointSel.y) * 
@@ -598,8 +609,8 @@ int main(int argc, char** argv)
                 // 搜索到了当前边缘特征点在不同scanID里的最近点和次近点
               }
 
-              pointSearchCornerInd1[i] = closestPointInd; // 第i个边缘特征点的kd-tree最近距离点，-1表示未找到满足的点
-              pointSearchCornerInd2[i] = minPointInd2;    // 第i个边缘特征点的kd-tree次近距离点，-1表示未找到满足的点
+              pointSearchCornerInd1[i] = closestPointInd; // 当前所有边特征点在上一时刻边特征点云中对应的最邻近点的索引
+              pointSearchCornerInd2[i] = minPointInd2;    // 当前所有边特征点在上一时刻边特征点云中对应的次邻近点的索引
             }
 
             /*
@@ -609,10 +620,10 @@ int main(int argc, char** argv)
               程序中给当前特征点设置了权重s，并保存满足距离条件的匹配结果。
             */
 
-            // 构建点到直线的距离约束，求偏导
+            // 构建Jaccobian矩阵，构建点到直线的距离约束，求偏导
             if (pointSearchCornerInd2[i] >= 0) { // 特征点存在次邻近点，即有配准点
-              tripod1 = laserCloudCornerLast->points[pointSearchCornerInd1[i]];
-              tripod2 = laserCloudCornerLast->points[pointSearchCornerInd2[i]];
+              tripod1 = laserCloudCornerLast->points[pointSearchCornerInd1[i]]; // 最邻近点
+              tripod2 = laserCloudCornerLast->points[pointSearchCornerInd2[i]]; // 次邻近点
 
               // 选择的特征点记为O，kd-tree最近距离点记为A，另一个最近距离点记为B
               float x0 = pointSel.x; // 当前帧特征点
@@ -636,7 +647,7 @@ int main(int argc, char** argv)
                          + ((x0 - x1)*(z0 - z2) - (x0 - x2)*(z0 - z1))
                          * ((x0 - x1)*(z0 - z2) - (x0 - x2)*(z0 - z1)) 
                          + ((y0 - y1)*(z0 - z2) - (y0 - y2)*(z0 - z1))
-                         * ((y0 - y1)*(z0 - z2) - (y0 - y2)*(z0 - z1))); // 文章公式(2)中的分子部分->分别作差并叉乘后的向量模长 表示平行四边形面积 
+                         * ((y0 - y1)*(z0 - z2) - (y0 - y2)*(z0 - z1))); // 文章公式(2)中的分子部分->分别作差并叉乘后的向量模长，表示平行四边形面积 
 
               float l12 = sqrt((x1 - x2)*(x1 - x2) + (y1 - y2)*(y1 - y2) + (z1 - z2)*(z1 - z2)); // 公式（2）分母部分->两个最近距离点之间的距离，即向量AB的模
 
@@ -664,7 +675,7 @@ int main(int argc, char** argv)
               pointProj.z -= lc * ld2;
 
               // 权重计算，距离越大权重越小，距离越小权重越大，得到的权重范围<=1
-              float s = 1;
+              float s = 1; // 阻尼因子
               if (iterCount >= 5) { // 5次迭代之后开始增加权重因素
                 s = 1 - 1.8 * fabs(ld2); // 点到直线距离越小配准越可信，则分配权重越大，距离越小，s越大
               }
@@ -683,6 +694,11 @@ int main(int argc, char** argv)
 			      // 一次迭代中的一个边缘特征点处理完毕
           }
 		      // 一次迭代中的所有边缘特征点处理完毕
+
+          /*
+            2. 特征面上的点配准并构建Jaccobian
+            与特征线类似，先找最近点j，在j周围找I，在j周围找m，将(j,I,m)称为点i在t时刻点云中的对应
+          */
 
           /*
             特征面上的点配准与特征线类似，差异在于线特征点需要target点云中与之匹配的2个线特征点，而面特征点需要找3个匹配点，其中最近点与次近点在同一条scan线上。
@@ -764,6 +780,7 @@ int main(int argc, char** argv)
             }
             // “每迭代五次，重新寻找最近点和次近点”这个过程结束
 
+            // 构建Jaccobian矩阵
             if (pointSearchSurfInd2[i] >= 0 && pointSearchSurfInd3[i] >= 0) { // 不为-1表示找到了满足要求的点
               tripod1 = laserCloudSurfLast->points[pointSearchSurfInd1[i]]; // A点
               tripod2 = laserCloudSurfLast->points[pointSearchSurfInd2[i]]; // B点
@@ -822,7 +839,9 @@ int main(int argc, char** argv)
           }
           // 一次迭代中的所有平面特征点处理完毕
 
-          int pointSelNum = laserCloudOri->points.size();
+          /* 3. L-M运动估计求解 */
+
+          int pointSelNum = laserCloudOri->points.size(); // 匹配到的点的个数(即存在多少个约束) 
           if (pointSelNum < 10) {
             continue; // 如果符合权重条件的边缘和平面特征点少于10个，放弃本次迭代
           }
@@ -836,8 +855,8 @@ int main(int argc, char** argv)
 
           //计算matA，matB矩阵
           for (int i = 0; i < pointSelNum; i++) {
-            pointOri = laserCloudOri->points[i];
-            coeff = coeffSel->points[i];
+            pointOri = laserCloudOri->points[i]; // 当前时刻点坐标
+            coeff = coeffSel->points[i]; // 该点所对应的偏导数
 
             float s = 1;
             // 采用Levenberg-Marquardt计算
@@ -902,6 +921,7 @@ int main(int argc, char** argv)
             matB.at<float>(i, 0) = -0.05 * d2; // 负号使得拟合效果越好，matB越小，0.05是LM算法的矫正系数
           }
 
+          // 最小二乘计算(QR分解法)
           cv::transpose(matA, matAt); // 生成转置矩阵
           matAtA = matAt * matA;
           matAtB = matAt * matB;
@@ -912,7 +932,7 @@ int main(int argc, char** argv)
             cv::Mat matV(6, 6, CV_32F, cv::Scalar::all(0)); // 特征向量6*6矩阵
             cv::Mat matV2(6, 6, CV_32F, cv::Scalar::all(0));
 
-            cv::eigen(matAtA, matE, matV); // 求解特征值和特征向量
+            cv::eigen(matAtA, matE, matV); // 计算矩阵的特征向量E及特征向量的反对称阵V
             matV.copyTo(matV2);
 
             isDegenerate = false;
@@ -922,7 +942,7 @@ int main(int argc, char** argv)
                 for (int j = 0; j < 6; j++) { 
                   matV2.at<float>(i, j) = 0; // 对应特征向量置为0
                 }
-                isDegenerate = true;
+                isDegenerate = true; // 存在比10小的特征值则出现退化
               } else {
                 break;
               }
@@ -968,8 +988,12 @@ int main(int argc, char** argv)
         // 结束所有迭代
       }
 
+      /**********************************
+       ************ 坐标转换 ************
+       *********************************/
+
       float rx, ry, rz, tx, ty, tz; // 当前帧lidar全局位姿
-      // 通过相邻帧相对旋转关系求当前帧姿态角
+      // 计算旋转角的累计变化量
       AccumulateRotation(transformSum[0], transformSum[1], transformSum[2], 
                          -transform[0], -transform[1] * 1.05, -transform[2], rx, ry, rz);
 
