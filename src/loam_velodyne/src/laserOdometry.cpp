@@ -564,7 +564,7 @@ int main(int argc, char** argv)
                 int closestPointScan = int(laserCloudCornerLast->points[closestPointInd].intensity);  // 最近点所在的scan_ID
                 float pointSqDis, minPointSqDis2 = 25;
                 // 从找得到的最邻近点开始，向上搜索，遍历所有边特征点
-                for (int j = closestPointInd + 1; j < laserCloudCornerLastNum/*源程序为cornerPointsSharpNum*/; j++) { // 向scanID增大的方向查找
+                for (int j = closestPointInd + 1; j < cornerPointsSharpNum; j++) { // 向scanID增大的方向查找
                   if (int(laserCloudCornerLast->points[j].intensity) > closestPointScan + 2.5) { // 找到与最邻近点相距3条线的特征点时跳出
                     break;
                   }
