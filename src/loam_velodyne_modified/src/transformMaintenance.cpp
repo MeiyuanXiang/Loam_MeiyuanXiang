@@ -31,7 +31,9 @@
 //     Robotics: Science and Systems Conference (RSS). Berkeley, CA, July 2014.
 
 /*
-  transformMaintenance主要是处理轨迹发布，如果有优化结果，则使用这一时刻的优化结果作为轨迹，如果没有优化结果只有里程计结果，则使用里程计结果作为这一时刻的轨迹。
+  transformMaintenance主要是处理轨迹发布，如果有优化结果，则使用这一时刻的优化结果作为轨迹，
+  如果没有优化结果只有里程计结果，则使用里程计结果作为这一时刻的轨迹。
+  也可以认为，使用laserOdometry输出的高频率odom对laserMapping输出的低频率odom进行插值，得到最终的轨迹。
 */
 
 #include <cmath>

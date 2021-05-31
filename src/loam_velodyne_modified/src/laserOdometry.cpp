@@ -31,7 +31,7 @@
 //     Robotics: Science and Systems Conference (RSS). Berkeley, CA, July 2014.
 
 /*
-  laserOdometry主要利用相邻两帧的点云数据进行配准，即完成t时刻和t+1时刻点云数据的光联，并估计雷达的相对运动关系。
+  laserOdometry主要利用相邻两帧的点云数据进行配准，即完成t时刻和t+1时刻点云数据的光联，并估计雷达的相对运动关系，输出高频率odom。
 */
 
 #include <cmath>
@@ -961,7 +961,7 @@ int main(int argc, char **argv)
             transform[5] += matX.at<float>(5, 0);
           }
 
-          // 计算旋转平移量，如果很小就停止迭代
+          // 判断是否已收敛, 如果很小就停止迭代
           float deltaR = sqrt(
               pow(rad2deg(matX.at<float>(0, 0)), 2) +
               pow(rad2deg(matX.at<float>(1, 0)), 2) +

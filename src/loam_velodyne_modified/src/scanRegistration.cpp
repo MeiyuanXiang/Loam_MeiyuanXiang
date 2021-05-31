@@ -31,11 +31,11 @@
 //     Robotics: Science and Systems Conference (RSS). Berkeley, CA, July 2014.
 
 /*
-  scanRegistration主要完成对点云和imu数据进行预处理，用于特征点的配准。
-  1.点云的按线分类
-  2.有imu数据时，对应的激光点进行加速度补偿
-  3.根据激光点的曲率，将激光点划分为不同类别（边特征/面特征/不是特征）
-  4.发布处理结果
+  scanRegistration主要对点云和imu数据进行预处理，用于特征点的配准。
+  1.对单帧点云（sweep）进行分线束（VLP16分为16束），每束称为一个scan，并记录每个点所属线束和每个点在此帧点云内的相对扫描时间；
+  2.有imu数据时，对对应的激光点进行运动补偿；
+  3.针对单个scan，根据激光点的曲率，将激光点划分为不同特征类别（边特征/面特征/不是特征）；
+  4.发布处理结果。
 */
 
 /*******************************************************************************
@@ -292,13 +292,20 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg)
 
   double timeScanCur = laserCloudMsg->header.stamp.toSec(); // toSec()转化成相应的浮点秒数，timeScanCur是当前点云帧的起始时刻
 
-  /* 剔除异常点，并计算起始和终止角度 */
+  /* 剔除异常点 */
   pcl::PointCloud<pcl::PointXYZ> laserCloudIn;
   pcl::fromROSMsg(*laserCloudMsg, laserCloudIn); // 将ros消息转换成pcl点云
   std::vector<int> indices;
   pcl::removeNaNFromPointCloud(laserCloudIn, laserCloudIn, indices); // 剔除坐标中包含NaN的无效点
   int cloudSize = laserCloudIn.points.size();                        // 点云的点数
-  // 当前帧起始角度，atan2范围[-pi, +pi]，计算旋转角时取负号是因为velodyne是航向角，顺时针方向
+
+  /*
+    获取点云的开始和结束水平角度, 确定一帧中点的角度范围
+    此处需要注意一帧扫描角度不一定<2pi, 可能大于2pi, 角度需特殊处理
+    角度范围用于确定每个点的相对扫描时间, 用于运动补偿
+  */
+
+  // 当前帧起始角度，atan2范围[-pi, +pi]，计算旋转角时取负号是因为velodyne是顺时针增大, 而坐标轴中的yaw是逆时针增加, 所以这里要取负号
   float startOri = -atan2(laserCloudIn.points[0].y, laserCloudIn.points[0].x);
   // 当前帧终止角度，加2*pi使点云旋转周期为2*pi
   float endOri = -atan2(laserCloudIn.points[cloudSize - 1].y, laserCloudIn.points[cloudSize - 1].x) + 2 * M_PI;
@@ -321,7 +328,8 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg)
   bool halfPassed = false;
   int count = cloudSize;
   PointType point;
-  std::vector<pcl::PointCloud<PointType>> laserCloudScans(N_SCANS); // 将点划到不同的线中
+  std::vector<pcl::PointCloud<PointType>> laserCloudScans(N_SCANS); // 每一线存储为一个单独的线(SCAN), 针对单个线计算特征点
+  // 根据几何角度(竖直)，把激光点分配到线中
   for (int i = 0; i < cloudSize; i++)
   {
     // 将ros坐标系转换为欧拉角坐标系
@@ -649,7 +657,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg)
         }
       }
 
-      // 从每一段最大曲率（每一段末尾）处往前判断，用于确定边界线特征点
+      // 选取角点，从每一段最大曲率（每一段末尾）处往前判断，用于确定边界线特征点
       int largestPickedNum = 0;
       for (int k = ep; k >= sp; k--)
       {
@@ -710,7 +718,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg)
         最后，除了被标记过的点(本身不能作为特征点以及被标记为边界线的特征点)，其它点都作为lessFlatPoints存储到surfPointsLessFlatScan中，并进一步滤波降采样(lessFlat点太多)，最后存储到surfPointsLessFlat中。
       */
 
-      // 从每一段曲率最小（前端）开始查找，用于确定平面点
+      // 选取平面点，从每一段曲率最小（前端）开始查找，用于确定平面点
       int smallestPickedNum = 0;
       for (int k = sp; k <= ep; k++)
       {
@@ -766,7 +774,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg)
       // 一个六等分段处理完毕
     }
 
-    // 由于less flat点最多，对每个分段less flat的点进行VoxelGrid体素栅格滤波，简化了点的数量，又保证了整体点云的基本形状
+    // 由于less flat点最多，对每个分段less flat的点进行降采样，简化了点的数量，又保证了整体点云的基本形状
     pcl::PointCloud<PointType> surfPointsLessFlatScanDS;
     pcl::VoxelGrid<PointType> downSizeFilter;
     downSizeFilter.setInputCloud(surfPointsLessFlatScan);

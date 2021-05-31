@@ -31,7 +31,9 @@
 //     Robotics: Science and Systems Conference (RSS). Berkeley, CA, July 2014.
 
 /*
-  laserMapping主要用于优化雷达里程计的位姿估计结果。
+  laserMapping主要用于优化雷达里程计的位姿估计结果，输出低频率odom。
+  1.通过将多帧的激光特征点云基于pose拼接，形成特征点云地图；
+  2.将新加入的帧与地图进行配准，得到更精准的pose，即建图。
 */
 
 #include <math.h>
