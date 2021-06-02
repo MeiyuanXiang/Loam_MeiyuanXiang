@@ -328,7 +328,7 @@ void laserCloudHandler(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg)
   bool halfPassed = false;
   int count = cloudSize;
   PointType point;
-  std::vector<pcl::PointCloud<PointType>> laserCloudScans(N_SCANS); // 每一线存储为一个单独的线(SCAN), 针对单个线计算特征点
+  std::vector<pcl::PointCloud<PointType> > laserCloudScans(N_SCANS); // 每一线存储为一个单独的线(SCAN), 针对单个线计算特征点
   // 根据几何角度(竖直)，把激光点分配到线中
   for (int i = 0; i < cloudSize; i++)
   {
