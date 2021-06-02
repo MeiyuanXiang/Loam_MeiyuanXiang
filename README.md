@@ -9,9 +9,9 @@ Loam相关论文、代码中文注释以及代码改动
 5. source ~/catkin_ws/devel/setup.bash
 
 # 数据
-链接：https://pan.baidu.com/s/1S2PTKo3T8ugWyHyULqwzag 
-提取码：gfen 
+链接：https://pan.baidu.com/s/1S2PTKo3T8ugWyHyULqwzag
+提取码：gfen
 
 # 运行
-$ roslaunch loam_velodyne loam_velodyne.launch
-$ rosbag play 2018-05-18-14-49-12_0.bag 
+1. roslaunch loam_velodyne loam_velodyne.launch
+2. rosbag play 2018-05-18-14-49-12_0.bag
