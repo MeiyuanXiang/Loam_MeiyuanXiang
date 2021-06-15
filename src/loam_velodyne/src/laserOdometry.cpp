@@ -133,6 +133,7 @@ float imuVeloFromStartX = 0, imuVeloFromStartY = 0, imuVeloFromStartZ = 0;
 // 三维位姿转换，pi坐标转换至该帧初始点位姿坐标系得到po
 void TransformToStart(PointType const * const pi, PointType * const po)
 {
+  // 插值系数计算，云中每个点的相对时间/点云周期（0.1）相当于*10
   float s = 10 * (pi->intensity - int(pi->intensity)); // s=0~1为激光点在一帧数据中的相对位置，插值系数计算，还原了reltime变量
 
   // 线性插值：根据每个点在点云中的相对位置关系，乘以相应的旋转平移系数
@@ -160,6 +161,7 @@ void TransformToStart(PointType const * const pi, PointType * const po)
   po->intensity = pi->intensity;
 }
 
+// 当前点云中的点相对第一个点去除因匀速运动产生的畸变，效果相当于得到在点云扫描结束位置坐标系下  的扫描得到的点云
 void TransformToEnd(PointType const * const pi, PointType * const po)
 {
   // 插值系数计算
@@ -431,6 +433,7 @@ int main(int argc, char** argv)
   ros::Publisher pubLaserCloudFullRes = nh.advertise<sensor_msgs::PointCloud2>("/velodyne_cloud_3", 2); // 本次节点里的变换到扫描结束时刻的所有点
   ros::Publisher pubLaserOdometry = nh.advertise<nav_msgs::Odometry> ("/laser_odom_to_init", 5);
 
+  // 设置里程计和TF的坐标系
   nav_msgs::Odometry laserOdometry;
   laserOdometry.header.frame_id = "/camera_init";
   laserOdometry.child_frame_id = "/laser_odom";
@@ -453,7 +456,7 @@ int main(int argc, char** argv)
   bool status = ros::ok();
   while (status) {
     ros::spinOnce(); // 执行回调函数
-    // 读取新数据后改变标志位
+    // 读取新数据后改变标志位，数据是否都接收，而且时差小于0.005
     if (newCornerPointsSharp && newCornerPointsLessSharp && newSurfPointsFlat && 
         newSurfPointsLessFlat && newLaserCloudFullRes && newImuTrans &&
         fabs(timeCornerPointsSharp - timeSurfPointsLessFlat) < 0.005 &&
@@ -469,7 +472,7 @@ int main(int argc, char** argv)
       newImuTrans = false;
 
       /***********************************
-       ************** 初始化 *************
+       ************* 1.初始化 ************
        ***********************************/
 
       if (!systemInited) {
@@ -513,7 +516,7 @@ int main(int argc, char** argv)
       transform[5] -= imuVeloFromStartZ * scanPeriod;
 
       /***********************************
-       ******** 点云配准与运动估计 *********
+       ****** 2.点云配准与运动估计 *******
        ***********************************/
 
       if (laserCloudCornerLastNum > 10 && laserCloudSurfLastNum > 100) { // 上一时刻特征边(曲率大)上的点云个数大于10， 特征面内的点云大于100，保证足够多的特征点可用于t+1时刻的匹配
@@ -989,7 +992,7 @@ int main(int argc, char** argv)
       }
 
       /**********************************
-       ************ 坐标转换 ************
+       *********** 3.坐标转换 ***********
        *********************************/
 
       float rx, ry, rz, tx, ty, tz; // 当前帧lidar全局位姿

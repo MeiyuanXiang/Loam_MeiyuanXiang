@@ -69,6 +69,7 @@ bool newLaserCloudSurfLast = false;
 bool newLaserCloudFullRes = false;
 bool newLaserOdometry = false;
 
+// 立方体cube变量
 int laserCloudCenWidth = 10; // 邻域宽度, cm为单位
 int laserCloudCenHeight = 5; // 邻域高度
 int laserCloudCenDepth = 10; // 邻域深度
@@ -77,7 +78,7 @@ const int laserCloudHeight = 11; // 高方向个数
 const int laserCloudDepth = 21; // 深度方向个数
 
 const int laserCloudNum = laserCloudWidth * laserCloudHeight * laserCloudDepth; // 子cube总数，4851个长宽高为 cm × cm × cm 的立方体
-
+// 点云集索引
 int laserCloudValidInd[125]; // lidar视域范围内(FOV)的点云集索引
 int laserCloudSurroundInd[125]; // lidar周围的点云集索引
 
@@ -391,6 +392,7 @@ int main(int argc, char** argv)
   ros::Publisher pubLaserCloudFullRes = nh.advertise<sensor_msgs::PointCloud2>("/velodyne_cloud_registered", 2);
   ros::Publisher pubOdomAftMapped = nh.advertise<nav_msgs::Odometry> ("/aft_mapped_to_init", 5);
 
+  // tf 坐标系
   nav_msgs::Odometry odomAftMapped;
   odomAftMapped.header.frame_id = "/camera_init";
   odomAftMapped.child_frame_id = "/aft_mapped";
@@ -416,7 +418,7 @@ int main(int argc, char** argv)
   bool isDegenerate = false;
   cv::Mat matP(6, 6, CV_32F, cv::Scalar::all(0));
 
-  // 创建VoxelGrid滤波器（体素栅格滤波器），设置体素大小
+  // 创建VoxelGrid滤波器（体素栅格滤波器）
   pcl::VoxelGrid<PointType> downSizeFilterCorner;
   // 设置体素大小
   downSizeFilterCorner.setLeafSize(0.2, 0.2, 0.2);
@@ -454,7 +456,7 @@ int main(int argc, char** argv)
       frameCount++;
 
       /***********************************
-       ************* 坐标变换 *************
+       ************ 1.坐标变换 ***********
        ***********************************/
 
       if (frameCount >= stackFrameNum) {
@@ -476,7 +478,7 @@ int main(int argc, char** argv)
       }
 
       /***********************************
-       ************* 优化处理 *************
+       ************ 2.优化处理 ***********
        ***********************************/
 
 	    /* 优化处理,找当前估计的lidar位姿属于哪个cube，I/J/K对应cube的索引 */
