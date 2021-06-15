@@ -1,6 +1,9 @@
 # Loam_MeiyuanXiang
 Loam相关论文、代码中文注释以及代码改动
 
+# 参考
+https://github.com/cuitaixiang/LOAM_NOTED  
+
 # 环境
 1. Ubuntu（测试了Ubuntu16.04.5、Ubuntu18.04）
 2. ROS (测试了kinetic、melodic)
